@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/fsnotify/fsnotify"
@@ -17,7 +18,8 @@ import (
 )
 
 const (
-	script = `<script src="tinyreload.js"></script>`
+	script      = `<script src="tinyreload.js"></script>`
+	minEventTTL = 100 * time.Millisecond
 )
 
 var upgrader = websocket.Upgrader{
@@ -133,16 +135,28 @@ func watcher(ch chan struct{}, staticPath string) {
 	watchPath(staticPath, fsWatcher)
 	log.Printf("Watching: %v\n", fsWatcher.WatchList())
 
+	// some events fire twice probably due to text editor stuff
+	// we are storing the events in a map and we will forget them
+	// after at least minEventTTL
+	// now except for events with delta < minEventTTL between them this is fine
+
+	var ticker = time.NewTicker(minEventTTL)
+	var seen = make(map[fsnotify.Event]struct{})
+
 	for {
 		select {
-		// event fires twice probably from text editor stuff
-		// add (Name, Op) array, check unique and clean after a ticker triggers
 		case event := <-fsWatcher.Events:
-			// log.Println("New event from ", event.Name, " ", event.Op)
+			if _, met := seen[event]; met {
+				ticker.Reset(minEventTTL)
+				break
+			}
+
+			seen[event] = struct{}{}
+			log.Println("New event from ", event.Name, " ", event.Op)
 
 			if basename := filepath.Base(event.Name); ignore(basename) {
 				// log.Println("ignoring " + event.Name)
-				return
+				break
 			}
 
 			if event.Has(fsnotify.Create) {
@@ -158,6 +172,10 @@ func watcher(ch chan struct{}, staticPath string) {
 			ch <- struct{}{}
 		case err := <-fsWatcher.Errors:
 			panic(err)
+		case <-ticker.C:
+			for event := range seen {
+				delete(seen, event)
+			}
 		}
 	}
 }
