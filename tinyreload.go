@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -27,7 +27,34 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 16,
 }
 
-var connections []*websocket.Conn
+var connections SafeConnections
+
+type SafeConnections struct {
+	mu          sync.Mutex
+	connections []*websocket.Conn
+}
+
+func (sc *SafeConnections) Set(newConnections []*websocket.Conn) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.connections = newConnections
+}
+
+func (sc *SafeConnections) Len() int {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return len(sc.connections)
+}
+
+func (sc *SafeConnections) Broadcast(msg []byte) int {
+	var successful int = 0
+	for _, c := range sc.connections {
+		if err := c.WriteMessage(websocket.TextMessage, msg); err == nil {
+			successful++
+		}
+	}
+	return successful
+}
 
 type TinyHandler struct {
 	root string
@@ -180,32 +207,15 @@ func watcher(ch chan struct{}, staticPath string) {
 	}
 }
 
-// FUTURE TODO: maybe send specific file that was changed
+// FUTURE: maybe send specific file that was changed
 func reload(ch chan struct{}) {
-	// could use a map
-	var deadConnections []*websocket.Conn = make([]*websocket.Conn, 0, 4)
-
 	for range ch {
-		log.Println("Received Signal")
-		log.Printf("Updating %d clients\n", len(connections))
-		for _, conn := range connections {
-			if err := conn.WriteMessage(websocket.TextMessage, []byte("reload")); err != nil {
-				deadConnections = append(deadConnections, conn)
-				log.Printf("Invalid connection: %v\n", conn)
-			}
-		}
+		n := connections.Broadcast([]byte("reload"))
 
-		// brotha ew
-		for _, conn := range deadConnections {
-			idx := slices.Index(connections, conn)
-			last := len(connections) - 1
+		// reload should close the connection so there is no point to remember it
+		connections.Set(nil)
 
-			connections[idx] = connections[last]
-			connections[last] = nil
-			connections = connections[:last]
-		}
-
-		deadConnections = nil
+		log.Printf("Broadcasted to %d clients\n", n)
 	}
 }
 
@@ -215,7 +225,7 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	connections = append(connections, conn)
+	connections.Set(append(connections.connections, conn))
 }
 
 func main() {
@@ -230,7 +240,7 @@ func main() {
 	go watcher(ch, staticPath)
 	go reload(ch)
 
-	connections = make([]*websocket.Conn, 0, 8)
+	connections = SafeConnections{sync.Mutex{}, make([]*websocket.Conn, 0, 8)}
 
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
