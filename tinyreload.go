@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"io/fs"
 	"log"
 	"mime"
@@ -124,7 +123,7 @@ func (th *TinyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	reader := bytes.NewReader([]byte(html))
+	reader := strings.NewReader(html)
 	http.ServeContent(w, r, path, info.ModTime(), reader)
 }
 
