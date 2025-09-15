@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"mime"
@@ -17,14 +19,35 @@ import (
 )
 
 const (
-	script      = `<script src="tinyreload.js"></script>`
+	script      = `<script src="/tinyreload.js"></script>`
 	minEventTTL = 100 * time.Millisecond
+)
+
+const (
+	Red    = "\033[31m"
+	Green  = "\033[32m"
+	Yellow = "\033[33m"
+	Blue   = "\033[34m"
+	Cyan   = "\033[36m"
+	Reset  = "\033[0m"
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  16,
 	WriteBufferSize: 16,
 }
+
+func prefix(color, name string) string {
+	return fmt.Sprintf("%s%-*s%s", color, 15, name, Reset)
+}
+
+var (
+	mainLog   = log.New(os.Stdout, prefix(Cyan, "[TINYRELOAD]"), log.LstdFlags)
+	serverLog = log.New(os.Stdout, prefix(Green, "[HTTP]"), log.LstdFlags)
+	fsLog     = log.New(os.Stdout, prefix(Blue, "[FS]"), log.LstdFlags)
+	wsLog     = log.New(os.Stdout, prefix(Yellow, "[WS]"), log.LstdFlags)
+	// errLog    = log.New(os.Stderr, Red+"[ERROR] "+Reset, log.LstdFlags)
+)
 
 var connections SafeConnections
 
@@ -66,9 +89,11 @@ func NewTinyHandler(root string) *TinyHandler {
 func (th *TinyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cleanPath := filepath.Clean(r.URL.Path)
 
+	absRoot, _ := filepath.Abs(th.root)
 	path := filepath.Join(th.root, cleanPath)
-	// log.Println(path)
-	if !strings.HasPrefix(path, th.root) {
+	absPath, _ := filepath.Abs(path)
+
+	if !strings.HasPrefix(absPath, absRoot) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -81,9 +106,14 @@ func (th *TinyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if info.IsDir() {
 		path = filepath.Join(path, "index.html")
+		info, err = os.Stat(path)
+		if err != nil || info.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
 	}
 
-	// log.Println("serving " + path)
+	serverLog.Println("GET " + path)
 
 	ext := filepath.Ext(path)
 	if mimeType := mime.TypeByExtension(ext); mimeType != "" {
@@ -128,7 +158,7 @@ func (th *TinyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func ignore(name string) bool {
-	return strings.HasPrefix(name, ".")
+	return name != "." && strings.HasPrefix(name, ".")
 }
 
 func watchPath(basePath string, fsWatcher *fsnotify.Watcher) {
@@ -159,7 +189,7 @@ func watcher(ch chan struct{}, staticPath string) {
 	}
 
 	watchPath(staticPath, fsWatcher)
-	log.Printf("Watching: %v\n", fsWatcher.WatchList())
+	fsLog.Printf("Watching: %v\n", fsWatcher.WatchList())
 
 	// some events fire twice probably due to text editor stuff
 	// we are storing the events in a map and we will forget them
@@ -178,10 +208,9 @@ func watcher(ch chan struct{}, staticPath string) {
 			}
 
 			seen[event] = struct{}{}
-			log.Println("New event from ", event.Name, " ", event.Op)
+			fsLog.Println("Event: ", event.Name, " ", event.Op)
 
 			if basename := filepath.Base(event.Name); ignore(basename) {
-				// log.Println("ignoring " + event.Name)
 				break
 			}
 
@@ -193,11 +222,11 @@ func watcher(ch chan struct{}, staticPath string) {
 				fsWatcher.Remove(event.Name)
 			}
 
-			// log.Printf("Watching: %-v\n", fsWatcher.WatchList())
+			fsLog.Printf("Watching: %-v\n", fsWatcher.WatchList())
 
 			ch <- struct{}{}
 		case err := <-fsWatcher.Errors:
-			panic(err)
+			fsLog.Fatal(err)
 		case <-ticker.C:
 			for event := range seen {
 				delete(seen, event)
@@ -214,7 +243,7 @@ func reload(ch chan struct{}) {
 		// reload should close the connection so there is no point to remember it
 		connections.Set(nil)
 
-		log.Printf("Broadcasted to %d clients\n", n)
+		wsLog.Printf("Broadcasted to %d clients\n", n)
 	}
 }
 
@@ -228,18 +257,36 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	const staticPath string = "dev-static"
-	const addr string = ":9090"
+	staticPath := flag.String("path", "./", "path to static")
+	addr := flag.String("addr", ":9090", "server listen address")
+
+	flag.Parse()
+
+	info, err := os.Stat(*staticPath)
+	if os.IsNotExist(err) {
+		log.Fatalf("directory %s does not exist", *staticPath)
+	}
+
+	if !info.IsDir() {
+		log.Fatalf("can not serve non-directory: %s", *staticPath)
+	}
+
+	f, err := os.Open(*staticPath)
+	if err != nil {
+		log.Fatalf("cannot open directory %s", *staticPath)
+	}
+	f.Close()
 
 	http.Handle("/tinyreload.js", http.FileServer(http.Dir("./injectable")))
-	http.Handle("/", NewTinyHandler(staticPath))
+	http.Handle("/", NewTinyHandler(*staticPath))
 	http.HandleFunc("/ws", serveWs)
 
 	ch := make(chan struct{}, 1)
-	go watcher(ch, staticPath)
+	go watcher(ch, *staticPath)
 	go reload(ch)
 
 	connections = SafeConnections{sync.Mutex{}, make([]*websocket.Conn, 0, 8)}
 
-	log.Fatal(http.ListenAndServe(addr, nil))
+	mainLog.Printf("listening at %s\n", *addr)
+	mainLog.Fatal(http.ListenAndServe(*addr, nil))
 }
