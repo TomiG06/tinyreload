@@ -28,9 +28,19 @@ const (
 	Green  = "\033[32m"
 	Yellow = "\033[33m"
 	Blue   = "\033[34m"
-	Cyan   = "\033[36m"
+	Cyan   = "\033[38;2;0;173;216m"
 	Reset  = "\033[0m"
 )
+
+const banner string = `
+████████╗██╗███╗   ██╗██╗   ██╗██████╗ ███████╗██╗      ██████╗  █████╗ ██████╗ 
+╚══██╔══╝██║████╗  ██║╚██╗ ██╔╝██╔══██╗██╔════╝██║     ██╔═══██╗██╔══██╗██╔══██╗
+   ██║   ██║██╔██╗ ██║ ╚████╔╝ ██████╔╝█████╗  ██║     ██║   ██║███████║██║  ██║
+   ██║   ██║██║╚██╗██║  ╚██╔╝  ██╔══██╗██╔══╝  ██║     ██║   ██║██╔══██║██║  ██║
+   ██║   ██║██║ ╚████║   ██║   ██║  ██║███████╗███████╗╚██████╔╝██║  ██║██████╔╝
+   ╚═╝   ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝ 
+                                                                                
+`
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  16,
@@ -276,6 +286,8 @@ func main() {
 		log.Fatalf("cannot open directory %s", *staticPath)
 	}
 	f.Close()
+
+	fmt.Print(Cyan + banner + Reset)
 
 	http.Handle("/tinyreload.js", http.FileServer(http.Dir("./injectable")))
 	http.Handle("/", NewTinyHandler(*staticPath))
