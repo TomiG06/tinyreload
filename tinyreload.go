@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	script      = `<script src="/tinyreload.js"></script>`
-	minEventTTL = 100 * time.Millisecond
+	script       = `<script src="/tinyreload.js"></script>`
+	debounceTime = 100 * time.Millisecond
 )
 
 const (
@@ -205,28 +205,25 @@ func watcher(ch chan struct{}, staticPath string) {
 
 	// some events fire twice probably due to text editor stuff
 	// we are storing the events in a map and we will forget them
-	// after at least minEventTTL
-	// now except for events with delta < minEventTTL between them this is fine
+	// after at least debounceTime
 
-	//NOTE: maybe send on the last event after ttl
-
-	var ticker = time.NewTicker(minEventTTL)
+	var ticker = time.NewTicker(debounceTime)
 	var seen = make(map[fsnotify.Event]struct{})
 
 	for {
 		select {
 		case event := <-fsWatcher.Events:
 			if _, met := seen[event]; met {
-				ticker.Reset(minEventTTL)
+				ticker.Reset(debounceTime)
 				break
 			}
-
-			seen[event] = struct{}{}
-			fsLog.Println("Event: ", event.Name, " ", event.Op)
 
 			if basename := filepath.Base(event.Name); ignore(basename) {
 				break
 			}
+
+			fsLog.Println("Event: ", event.Name, " ", event.Op)
+			seen[event] = struct{}{}
 
 			if event.Has(fsnotify.Create) {
 				watchPath(event.Name, fsWatcher)
@@ -237,12 +234,12 @@ func watcher(ch chan struct{}, staticPath string) {
 			}
 
 			fsLog.Printf("Watching: %-v\n", fsWatcher.WatchList())
-
-			ch <- struct{}{}
 		case err := <-fsWatcher.Errors:
 			fsLog.Fatal(err)
 		case <-ticker.C:
 			for event := range seen {
+				// this enables future HMR implementation
+				ch <- struct{}{}
 				delete(seen, event)
 			}
 		}
