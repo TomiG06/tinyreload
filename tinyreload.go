@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -8,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	pathlib "path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -41,6 +43,9 @@ const banner string = `
    ╚═╝   ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝ 
                                                                                 
 `
+
+//go:embed injectable/tinyreload.js
+var injectable embed.FS
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  16,
@@ -115,12 +120,10 @@ func (th *TinyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if info.IsDir() {
-		path = filepath.Join(path, "index.html")
-		info, err = os.Stat(path)
-		if err != nil || info.IsDir() {
-			http.NotFound(w, r)
-			return
-		}
+		// Redirect to index.html
+		redirectURL := pathlib.Join(r.URL.Path, "index.html")
+		http.Redirect(w, r, redirectURL, http.StatusMovedPermanently)
+		return
 	}
 
 	serverLog.Println("GET " + path)
@@ -157,7 +160,6 @@ func (th *TinyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// hope this is fine
 	doc.Find("body").AppendHtml(script)
 
-	// maybe no intermediate string?
 	html, err := doc.Html()
 	if err != nil {
 		panic(err)
@@ -206,6 +208,8 @@ func watcher(ch chan struct{}, staticPath string) {
 	// after at least minEventTTL
 	// now except for events with delta < minEventTTL between them this is fine
 
+	//NOTE: maybe send on the last event after ttl
+
 	var ticker = time.NewTicker(minEventTTL)
 	var seen = make(map[fsnotify.Event]struct{})
 
@@ -245,7 +249,7 @@ func watcher(ch chan struct{}, staticPath string) {
 	}
 }
 
-// FUTURE: maybe send specific file that was changed
+// FUTURE: maybe send specific file that was changed (HMR)
 func reload(ch chan struct{}) {
 	for range ch {
 		n := connections.Broadcast([]byte("reload"))
@@ -262,12 +266,12 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 	}
-
+	wsLog.Println("connection established")
 	connections.Set(append(connections.connections, conn))
 }
 
 func main() {
-	staticPath := flag.String("path", "./", "path to static")
+	staticPath := flag.String("path", "./", "path to watch for changes")
 	addr := flag.String("addr", ":9090", "server listen address")
 
 	flag.Parse()
@@ -287,9 +291,17 @@ func main() {
 	}
 	f.Close()
 
+	injectableData, err := injectable.ReadFile("injectable/tinyreload.js")
+	if err != nil {
+		mainLog.Fatal("failed to read injectable file")
+	}
+
 	fmt.Print(Cyan + banner + Reset)
 
-	http.Handle("/tinyreload.js", http.FileServer(http.Dir("./injectable")))
+	http.HandleFunc("/tinyreload.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write(injectableData)
+	})
 	http.Handle("/", NewTinyHandler(*staticPath))
 	http.HandleFunc("/ws", serveWs)
 
@@ -299,6 +311,6 @@ func main() {
 
 	connections = SafeConnections{sync.Mutex{}, make([]*websocket.Conn, 0, 8)}
 
-	mainLog.Printf("listening at %s\n", *addr)
+	mainLog.Printf("listening on http://localhost%s\n", *addr)
 	mainLog.Fatal(http.ListenAndServe(*addr, nil))
 }
