@@ -3,7 +3,7 @@
 Tiny live-reload server for static sites. One small binary. No tooling, no config.
 
 ### Setup
-after you clone the repository run
+After you clone the repository run:
 ```bash
 ./setup.sh
 ```
@@ -17,18 +17,23 @@ tinyreload -path path/to/static -addr :9090
 ### How it works
 - Serves files from `-path`
 - Injects `<script src="/tinyreload.js"></script>` into `.html`
-- Watches the directory; on change sends a websocket "reload"
-- Browser reloads the page
+- Watches the directory; on change sends file URL via websocket
+- **CSS files**: Hot-reload without page refresh
+- **Other files**: Full page reload
 
 ### Flags
 - `-path` (default `./`): directory to serve
 - `-addr` (default `:9090`): listen address
 
-### Notes
-- Sets no-cache headers for HTML
-- Recursively watches; ignores dotfiles
-- Expects `index.html` for directory routes
+### Features
+- **Hot CSS reload**: CSS changes update without page refresh
+- **Embedded assets**: JavaScript bundled into binary (no external files)
+- **Smart reloading**: Different behavior for CSS vs other files
+- **Directory redirects**: `/path/` → `/path/index.html`
+- **No-cache headers**: Prevents browser caching of HTML
+- **Recursive watching**: Monitors all subdirectories; ignores dotfiles
 
-## TODO
-- Add HMR
+## Maybe in the future
+- Add HMR for JavaScript modules
+- Add configurable ignore patterns
 
