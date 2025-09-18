@@ -11,6 +11,7 @@ import (
 	"os"
 	pathlib "path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -126,7 +127,7 @@ func (th *TinyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serverLog.Println("GET " + path)
+	serverLog.Println("GET " + cleanPath)
 
 	ext := filepath.Ext(path)
 	if mimeType := mime.TypeByExtension(ext); mimeType != "" {
@@ -169,8 +170,31 @@ func (th *TinyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, path, info.ModTime(), reader)
 }
 
+// FUTURE: can use something like go-dotignore and support ignore configs
+
+//go:inline
 func ignore(name string) bool {
 	return name != "." && strings.HasPrefix(name, ".")
+}
+
+func PathToURL(root string, path string) string {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return ""
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return ""
+	}
+
+	// this should make it fs independent
+	urlPath := "/" + strings.ReplaceAll(rel, string(filepath.Separator), "/")
+	return urlPath
 }
 
 func watchPath(basePath string, fsWatcher *fsnotify.Watcher) {
@@ -194,7 +218,7 @@ func watchPath(basePath string, fsWatcher *fsnotify.Watcher) {
 	})
 }
 
-func watcher(ch chan struct{}, staticPath string) {
+func watcher(ch chan string, staticPath string) {
 	fsWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		panic(err)
@@ -208,12 +232,13 @@ func watcher(ch chan struct{}, staticPath string) {
 	// after at least debounceTime
 
 	var ticker = time.NewTicker(debounceTime)
-	var seen = make(map[fsnotify.Event]struct{})
+	var recordedEvents = make(map[fsnotify.Event]struct{})
+	var seenNames = make([]string, 0, 4)
 
 	for {
 		select {
 		case event := <-fsWatcher.Events:
-			if _, met := seen[event]; met {
+			if _, met := recordedEvents[event]; met {
 				ticker.Reset(debounceTime)
 				break
 			}
@@ -223,7 +248,7 @@ func watcher(ch chan struct{}, staticPath string) {
 			}
 
 			fsLog.Println("Event: ", event.Name, " ", event.Op)
-			seen[event] = struct{}{}
+			recordedEvents[event] = struct{}{}
 
 			if event.Has(fsnotify.Create) {
 				watchPath(event.Name, fsWatcher)
@@ -237,22 +262,40 @@ func watcher(ch chan struct{}, staticPath string) {
 		case err := <-fsWatcher.Errors:
 			fsLog.Fatal(err)
 		case <-ticker.C:
-			for event := range seen {
-				// this enables future HMR implementation
-				ch <- struct{}{}
-				delete(seen, event)
+			// it probably wont triger with multiple files but whatever
+			if len(recordedEvents) == 0 {
+				break
+			}
+
+			seenNames := seenNames[:0]
+			for event := range recordedEvents {
+				if slices.Contains(seenNames, event.Name) {
+					continue
+				}
+				seenNames = append(seenNames, event.Name)
+				url := PathToURL(staticPath, event.Name)
+				ch <- url
+				delete(recordedEvents, event)
 			}
 		}
 	}
 }
 
+//go:inline
+func pathReloads(path string) bool {
+	return !strings.HasSuffix(path, ".css")
+}
+
 // FUTURE: maybe send specific file that was changed (HMR)
-func reload(ch chan struct{}) {
-	for range ch {
-		n := connections.Broadcast([]byte("reload"))
+func reload(ch chan string) {
+	for p := range ch {
+		//broadcast p(ath) and let the client decide what to do (reload, hmr)
+		n := connections.Broadcast([]byte(p))
 
 		// reload should close the connection so there is no point to remember it
-		connections.Set(nil)
+		if pathReloads(p) {
+			connections.Set(nil)
+		}
 
 		wsLog.Printf("Broadcasted to %d clients\n", n)
 	}
@@ -302,7 +345,7 @@ func main() {
 	http.Handle("/", NewTinyHandler(*staticPath))
 	http.HandleFunc("/ws", serveWs)
 
-	ch := make(chan struct{}, 1)
+	ch := make(chan string)
 	go watcher(ch, *staticPath)
 	go reload(ch)
 
