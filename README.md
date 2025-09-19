@@ -1,5 +1,7 @@
 ## tinyreload
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/TomiG06/clc)](https://goreportcard.com/report/github.com/TomiG06/tinyreload)
+
 Tiny live-reload server for static sites. One small binary. No tooling, no config.
 
 ### Setup
