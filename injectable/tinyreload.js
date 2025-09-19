@@ -1,3 +1,5 @@
+const tinyreloadPayloadSep = '\x1F';
+
 function reloadCSS(file) {
     const links = document.querySelectorAll('link[rel="stylesheet"]');
     links.forEach(link => {
@@ -16,14 +18,19 @@ document.addEventListener("DOMContentLoaded", () => {
         window.__tinyreload = new WebSocket(`ws://${document.location.host}/ws`)
         console.log('Established WS connection!')
     }
+
+    window.__tinyreload.onerror = (err) => console.error("WS error:", err);
     
     window.__tinyreload.onmessage = (e) => {
-        if(e.data.endsWith('.css')) {
-            reloadCSS(e.data);
+        const changes = e.data.split(tinyreloadPayloadSep)
+        let reload = changes.some(c => !c.endsWith('.css'));
+
+        if(reload) {
+            window.location.reload();
             return;
         }
-
-        window.location.reload()
+        
+        changes.forEach(c => reloadCSS(c))
     }
 })
 

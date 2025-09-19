@@ -11,7 +11,6 @@ import (
 	"os"
 	pathlib "path"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +23,7 @@ import (
 const (
 	script       = `<script src="/tinyreload.js"></script>`
 	debounceTime = 100 * time.Millisecond
+	sep          = "\x1F"
 )
 
 const (
@@ -232,23 +232,23 @@ func watcher(ch chan string, staticPath string) {
 	// after at least debounceTime
 
 	var ticker = time.NewTicker(debounceTime)
-	var recordedEvents = make(map[fsnotify.Event]struct{})
-	var seenNames = make([]string, 0, 4)
+	var recordedEvents = make(map[string]struct{})
+	var names = make([]string, 0, 4)
 
 	for {
 		select {
 		case event := <-fsWatcher.Events:
-			if _, met := recordedEvents[event]; met {
+			if _, met := recordedEvents[event.Name]; met {
 				ticker.Reset(debounceTime)
 				break
 			}
 
-			if basename := filepath.Base(event.Name); ignore(basename) {
-				break
+			if ignore(filepath.Base(event.Name)) {
+				continue
 			}
 
 			fsLog.Println("Event: ", event.Name, " ", event.Op)
-			recordedEvents[event] = struct{}{}
+			recordedEvents[event.Name] = struct{}{}
 
 			if event.Has(fsnotify.Create) {
 				watchPath(event.Name, fsWatcher)
@@ -259,24 +259,23 @@ func watcher(ch chan string, staticPath string) {
 			}
 
 			fsLog.Printf("Watching: %-v\n", fsWatcher.WatchList())
+
 		case err := <-fsWatcher.Errors:
 			fsLog.Fatal(err)
+
 		case <-ticker.C:
 			// it probably wont triger with multiple files but whatever
 			if len(recordedEvents) == 0 {
 				break
 			}
 
-			seenNames := seenNames[:0]
-			for event := range recordedEvents {
-				if slices.Contains(seenNames, event.Name) {
-					continue
-				}
-				seenNames = append(seenNames, event.Name)
-				url := PathToURL(staticPath, event.Name)
-				ch <- url
-				delete(recordedEvents, event)
+			for name := range recordedEvents {
+				names = append(names, PathToURL(staticPath, name))
+				delete(recordedEvents, name)
 			}
+			payload := strings.Join(names, sep)
+			ch <- payload
+			names = names[:0]
 		}
 	}
 }
@@ -297,7 +296,7 @@ func reload(ch chan string) {
 			connections.Set(nil)
 		}
 
-		wsLog.Printf("Broadcasted to %d clients\n", n)
+		wsLog.Printf("Broadcasted %s to %d clients\n", p, n)
 	}
 }
 
