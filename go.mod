@@ -1,4 +1,4 @@
-module static-server
+module github.com/TomiG06/tinyreload
 
 go 1.23.2
 
