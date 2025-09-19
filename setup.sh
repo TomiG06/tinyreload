@@ -12,5 +12,4 @@ if [ -L "$LINKPATH" ] || [ -e "$LINK_PATH" ]; then
     sudo rm -f "$LINK_PATH"
 fi
 
-
 sudo ln -s $(pwd)/build/tinyreload "$LINK_PATH"

@@ -273,6 +273,7 @@ func watcher(ch chan string, staticPath string) {
 				names = append(names, PathToURL(staticPath, name))
 				delete(recordedEvents, name)
 			}
+
 			payload := strings.Join(names, sep)
 			ch <- payload
 			names = names[:0]

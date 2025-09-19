@@ -33,6 +33,9 @@ tinyreload -path path/to/static -addr :9090
 - **No-cache headers**: Prevents browser caching of HTML
 - **Recursive watching**: Monitors all subdirectories; ignores dotfiles
 
+### NOTES:
+- If you are in VIM it has some problems with not ignoring some internal vim files 
+
 ## Maybe in the future
 - Add HMR for JavaScript modules
 - Add configurable ignore patterns
